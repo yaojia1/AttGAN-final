@@ -9,7 +9,7 @@ import tfprob
 import tqdm
 
 import data
-import module
+import module_gender as module
 
 
 # ==============================================================================
@@ -20,9 +20,9 @@ default_att_names = ['Bald', 'Bangs', 'Black_Hair', 'Blond_Hair', 'Brown_Hair', 
                      'Male', 'Mouth_Slightly_Open', 'Mustache', 'No_Beard', 'Pale_Skin', 'Young']
 py.arg('--att_names', choices=data.ATT_ID.keys(), nargs='+', default=default_att_names)
 
-py.arg('--img_dir', default='./data/img_celeba/aligned/align_size(572,572)_move(0.250,0.000)_face_factor(0.450)_jpg/data')
-py.arg('--train_label_path', default='./data/img_celeba/train_label.txt')
-py.arg('--val_label_path', default='./data/img_celeba/val_label.txt')
+py.arg('--img_dir', default='./data/CelebAMask-HQ/CelebA-HQ-img')
+py.arg('--train_label_path', default='./data/CelebAMask-HQ/train_label.txt')
+py.arg('--val_label_path', default='./data/CelebAMask-HQ/val_label.txt')
 py.arg('--load_size', type=int, default=143)
 py.arg('--crop_size', type=int, default=128)
 
@@ -96,29 +96,38 @@ def D_train_graph():
 
     # placeholders & inputs
     lr = tf.placeholder(dtype=tf.float32, shape=[])
-
     xa, a = train_iter.get_next()
-    b = tf.random_shuffle(a)
+    i = args.att_names.index('Male')
+    c = a[..., :i]
+    d = a[..., i + 1:]
+    e = tf.square(a[..., i:i + 1] - 1)
+    e=tf.reshape(e,[-1,1])
+    print("喵喵喵",c, e, d)
+    b = tf.concat([c, e, d], axis=1)
     b_ = b * 2 - 1
 
     # generate
-    z = Genc(xa)
-    xb_ = Gdec(z, b_)
+    z = Genc(xa,training=False)
+    xb_,_ = Gdec(z, b_)
 
     # discriminate
     xa_logit_gan, xa_logit_att = D(xa)
     xb__logit_gan, xb__logit_att = D(xb_)
 
     # discriminator losses
-    xa_loss_gan, xb__loss_gan = d_loss_fn(xa_logit_gan, xb__logit_gan)
+    xa_loss_gan, xb__loss_gan = d_loss_fn(xa_logit_gan, xb__logit_gan)#对抗损失
     gp = tfprob.gradient_penalty(lambda x: D(x)[0], xa, xb_, args.gradient_penalty_mode, args.gradient_penalty_sample_mode)
-    xa_loss_att = tf.losses.sigmoid_cross_entropy(a, xa_logit_att)
-    reg_loss = tf.reduce_sum(D.func.reg_losses)
-
+    xa_loss_att = tf.losses.sigmoid_cross_entropy(a, xa_logit_att)#分类损失
+    reg_loss = tf.reduce_sum(D.func.reg_losses)#重构损失
+    '''
     loss = (xa_loss_gan + xb__loss_gan +
             gp * args.d_gradient_penalty_weight +
             xa_loss_att * args.d_attribute_loss_weight +
             reg_loss)
+    '''
+    loss = (xa_loss_gan + xb__loss_gan+
+            gp * args.d_gradient_penalty_weight)
+    #TODO 修改了loss
 
     # optim
     step_cnt, _ = tl.counter()
@@ -131,8 +140,8 @@ def D_train_graph():
             tl.summary_v2({
                 'loss_gan': xa_loss_gan + xb__loss_gan,
                 'gp': gp,
-                'xa_loss_att': xa_loss_att,
-                'reg_loss': reg_loss
+                #'xa_loss_att': xa_loss_att,
+                #'reg_loss': reg_loss
             }, step=step_cnt, name='D'),
             tl.summary_v2({'lr': lr}, step=step_cnt, name='learning_rate')
         ]
@@ -156,26 +165,37 @@ def G_train_graph():
     lr = tf.placeholder(dtype=tf.float32, shape=[])
 
     xa, a = train_iter.get_next()
-    b = tf.random_shuffle(a)
+    i = args.att_names.index('Male')
+    c = a[...,:i]
+    d=a[...,i+1:]
+    e = tf.square(a[..., i:i+2] - 1)
+    e = tf.square(a[..., i:i + 1] - 1)
+    e = tf.reshape(e, [-1, 1])
+    print("喵喵喵", c, e, d)
+    b = tf.concat([c,e,d], axis=1)
+
+
+    #a为原始属性,b转换性别
     a_ = a * 2 - 1
     b_ = b * 2 - 1
 
     # generate
-    z = Genc(xa)
-    xa_ = Gdec(z, a_)
-    xb_ = Gdec(z, b_)
+    z = Genc(xa,training=False)
+    xa_,_ = Gdec(z, a_)
+    xb_,_ = Gdec(z, b_)
 
     # discriminate
     xb__logit_gan, xb__logit_att = D(xb_)
 
     # generator losses
+    # TODO 修改生成器loss
     xb__loss_gan = g_loss_fn(xb__logit_gan)
     xb__loss_att = tf.losses.sigmoid_cross_entropy(b, xb__logit_att)
     xa__loss_rec = tf.losses.absolute_difference(xa, xa_)
     reg_loss = tf.reduce_sum(Genc.func.reg_losses + Gdec.func.reg_losses)
 
-    loss = (xb__loss_gan +
-            xb__loss_att * args.g_attribute_loss_weight +
+    loss = (xb__loss_gan+
+            #xb__loss_att * args.g_attribute_loss_weight +
             xa__loss_rec * args.g_reconstruction_loss_weight +
             reg_loss)
 
@@ -188,8 +208,8 @@ def G_train_graph():
             tf.contrib.summary.record_summaries_every_n_global_steps(10, global_step=step_cnt):
         summary = tl.summary_v2({
             'xb__loss_gan': xb__loss_gan,
-            'xb__loss_att': xb__loss_att,
-            'xa__loss_rec': xa__loss_rec,
+            #'xb__loss_att': xb__loss_att,
+            #'xa__loss_rec': xa__loss_rec,
             'reg_loss': reg_loss
         }, step=step_cnt, name='G')
 
@@ -221,7 +241,7 @@ def sample_graph():
     b_ = tf.placeholder(tf.float32, shape=[None, n_atts])
 
     # sample graph
-    x = Gdec(Genc(xa, training=False), b_, training=False)
+    x,_ = Gdec(Genc(xa, training=False), b_, training=False)
 
     # ======================================
     # =            run function            =
@@ -234,10 +254,11 @@ def sample_graph():
         # data for sampling
         xa_ipt, a_ipt = sess.run(val_next)
         b_ipt_list = [a_ipt]  # the first is for reconstruction
-        for i in range(n_atts):
+        for i in range(1):#n_atts
             tmp = np.array(a_ipt, copy=True)
-            tmp[:, i] = 1 - tmp[:, i]   # inverse attribute
-            tmp = data.check_attribute_conflict(tmp, args.att_names[i], args.att_names)
+            k = args.att_names.index('Male')
+            tmp[:, k] = 1 - tmp[:, k]   # inverse attribute
+            #tmp = data.check_attribute_conflict(tmp, args.att_names[i], args.att_names)
             b_ipt_list.append(tmp)
 
         x_opt_list = [xa_ipt]
@@ -269,7 +290,7 @@ step_cnt, update_cnt = tl.counter()
 # checkpoint
 checkpoint = tl.Checkpoint(
     {v.name: v for v in tf.global_variables()},
-    py.join(output_dir, 'checkpoints'),
+    py.join(output_dir, 'checkpoints_male'),
     max_to_keep=1
 )
 checkpoint.restore().initialize_or_restore()

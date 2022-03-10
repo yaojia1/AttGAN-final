@@ -42,6 +42,7 @@ class UNetGdec:
 
     def __call__(self, zs, a, dim=64, n_upsamplings=5, shortcut_layers=1, inject_layers=1, weight_decay=0.0,
                  norm_name='batch_norm', training=True, scope='UNetGdec'):
+        '''这个a是attribute'''
         MAX_DIM = 1024
 
         dconv_ = functools.partial(dconv, weights_regularizer=slim.l2_regularizer(weight_decay))
@@ -52,22 +53,30 @@ class UNetGdec:
         with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
             a = tf.to_float(a)
 
+            #print(a)
+
             z = utils.tile_concat(zs[-1], a)
+            zs2 = [z]
             for i in range(n_upsamplings - 1):
                 d = min(dim * 2**(n_upsamplings - 1 - i), MAX_DIM)
                 z = dconv_norm_relu(z, d, 4, 2)
+                zs2.append(z)
                 if shortcut_layers > i:
                     z = utils.tile_concat([z, zs[-2 - i]])
+                    zs2.append(z)
                 if inject_layers > i:
                     z = utils.tile_concat(z, a)
+                    zs2.append(z)
+
             x = tf.nn.tanh(dconv_(z, 3, 4, 2))
+            zs2.append(x)
 
         # variables and update operations
         self.variables = tf.global_variables(scope)
         self.trainable_variables = tf.trainable_variables(scope)
         self.reg_losses = tf.losses.get_regularization_losses(scope)
 
-        return x
+        return x,zs2
 
 
 class ConvD:
@@ -88,6 +97,7 @@ class ConvD:
                 d = min(dim * 2**i, MAX_DIM)
                 z = conv_norm_lrelu(z, d, 4, 2)
             z = slim.flatten(z)
+            #这是特征编码吗
 
             logit_gan = tf.nn.leaky_relu(fc_(z, fc_dim))
             logit_gan = fc_(logit_gan, 1)
@@ -99,6 +109,7 @@ class ConvD:
         self.variables = tf.global_variables(scope)
         self.trainable_variables = tf.trainable_variables(scope)
         self.reg_losses = tf.losses.get_regularization_losses(scope)
+
 
         return logit_gan, logit_att
 

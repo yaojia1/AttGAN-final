@@ -29,11 +29,22 @@ def make_celeba_dataset(img_dir,
                         training=True,
                         drop_remainder=True,
                         shuffle=True,
-                        repeat=1):
-    img_names = np.genfromtxt(label_path, dtype=str, usecols=0)
-    img_paths = np.array([py.join(img_dir, img_name) for img_name in img_names])
-    labels = np.genfromtxt(label_path, dtype=int, usecols=range(1, 41))
-    labels = labels[:, np.array([ATT_ID[att_name] for att_name in att_names])]
+                        repeat=1,
+                        test_begin=-1,
+                        test_num=0):
+    if test_begin>=0 and test_num!=0:
+        #test时只选取一部分数据
+        img_names = np.genfromtxt(label_path, dtype=str, usecols=0,skip_header=test_begin, max_rows=test_num)
+        img_paths = np.array([py.join(img_dir, img_name) for img_name in img_names])
+        labels = np.genfromtxt(label_path, dtype=int, usecols=range(1, 41),skip_header=test_begin, max_rows=test_num)
+        labels = labels[:, np.array([ATT_ID[att_name] for att_name in att_names])]
+    else:
+        img_names = np.genfromtxt(label_path, dtype=str, usecols=0)
+        img_paths = np.array([py.join(img_dir, img_name) for img_name in img_names])
+        labels = np.genfromtxt(label_path, dtype=int, usecols=range(1, 41))
+        labels = labels[:, np.array([ATT_ID[att_name] for att_name in att_names])]
+
+    #找出选中的属性列们
 
     if shuffle:
         idx = np.random.permutation(len(img_paths))
@@ -83,6 +94,7 @@ def check_attribute_conflict(att_batch, att_name, att_names):
     idx = att_names.index(att_name)
 
     for att in att_batch:
+        #下面都是其他属性转换
         if att_name in ['Bald', 'Receding_Hairline'] and att[idx] == 1:
             _set(att, 0, 'Bangs')
         elif att_name == 'Bangs' and att[idx] == 1:
